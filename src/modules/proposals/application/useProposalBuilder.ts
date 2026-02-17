@@ -19,7 +19,7 @@ import {
   type InsulationMaterialKey,
   type ServiceAreaKey,
 } from '../domain/insulationCatalog'
-import { calculateScopeTotal, calculateTechnicalPricing, roundCurrency } from '../domain/pricing'
+import { calculateScopeTotal, calculateTechnicalPricing, roundCurrency, calculateTaxCredit, calculateEnergySavings } from '../domain/pricing'
 import type { Client } from '../../clients/domain/client'
 import type { Company } from '../../company/domain/company'
 import { listContractorProposals, upsertProposal, getProposal } from '../infrastructure/proposalStorage'
@@ -116,7 +116,7 @@ function ensureRequiredScopes(serviceArea: ServiceAreaKey, scopes: ProposalScope
   return enriched
 }
 
-function recalculateLineItem(lineItem: EditableProposalLineItem): EditableProposalLineItem {
+function recalculateLineItem(lineItem: EditableProposalLineItem, climateZone: number = 4): EditableProposalLineItem {
   const requiredScopes = ensureRequiredScopes(lineItem.serviceArea as ServiceAreaKey, lineItem.additionalScopes, lineItem.effectiveAreaSqFt)
   const scopes = recalculateScopes(requiredScopes, lineItem.effectiveAreaSqFt)
   const additionalScopesTotal = roundCurrency(scopes.reduce((total, scope) => total + scope.total, 0))
@@ -140,6 +140,23 @@ function recalculateLineItem(lineItem: EditableProposalLineItem): EditablePropos
   // If locked, preserve the customized finalTotal value
   const nextFinalTotal = lineItem.isFinalLocked ? lineItem.finalTotal : pricing.suggestedTotal
 
+  // Calculate Tax Credit (IRA 2024)
+  const taxCreditResult = calculateTaxCredit({
+    materialKey: lineItem.materialKey,
+    applicationKey: lineItem.application,
+    subtotal: pricing.subtotal,
+  })
+
+  // Calculate Energy Savings
+  const energySavings = calculateEnergySavings({
+    climateZone,
+    serviceArea: lineItem.serviceArea,
+    currentRValue: lineItem.existingRValue,
+    targetRValue: lineItem.targetRValue,
+    areaSqFt: lineItem.areaSqFt,
+    proposalCost: nextFinalTotal - taxCreditResult.taxCredit,
+  })
+
   return {
     ...lineItem,
     additionalScopes: scopes,
@@ -153,6 +170,17 @@ function recalculateLineItem(lineItem: EditableProposalLineItem): EditablePropos
     marginValue: pricing.marginValue,
     suggestedTotal: pricing.suggestedTotal,
     finalTotal: roundCurrency(nextFinalTotal),
+    
+    // Tax credit fields
+    taxCredit: taxCreditResult.taxCredit,
+    taxCreditMax: taxCreditResult.maxCredit,
+    taxCreditPercentage: taxCreditResult.creditPercentage,
+    
+    // Energy savings fields
+    estimatedAnnualSavings: energySavings.estimatedAnnualSavings,
+    estimatedMonthlyAverage: energySavings.estimatedMonthlyAverage,
+    paybackPeriod: energySavings.paybackPeriod,
+    energyPercentReduction: energySavings.energyPercentReduction,
   }
 }
 
@@ -190,10 +218,13 @@ function buildLineItem(serviceArea: ServiceAreaKey, climateZone: number, company
     suggestedTotal: 0,
     finalTotal: 0,
     note: '',
+    taxCredit: 0,
+    taxCreditMax: 0,
+    taxCreditPercentage: 0,
     isFinalLocked: false,
   }
 
-  const calculated = recalculateLineItem(baseLine)
+  const calculated = recalculateLineItem(baseLine, climateZone)
 
   return {
     ...calculated,
@@ -230,6 +261,13 @@ function toProposalLineItem(item: EditableProposalLineItem): ProposalLineItem {
     suggestedTotal: item.suggestedTotal,
     finalTotal: item.finalTotal,
     note: item.note,
+    taxCredit: item.taxCredit,
+    taxCreditMax: item.taxCreditMax,
+    taxCreditPercentage: item.taxCreditPercentage,
+    estimatedAnnualSavings: item.estimatedAnnualSavings,
+    estimatedMonthlyAverage: item.estimatedMonthlyAverage,
+    paybackPeriod: item.paybackPeriod,
+    energyPercentReduction: item.energyPercentReduction,
   }
 }
 
@@ -334,10 +372,13 @@ function normalizeStoredLineItem(
     suggestedTotal: rawLineItem.suggestedTotal ?? 0,
     finalTotal: rawLineItem.finalTotal ?? 0,
     note: rawLineItem.note ?? '',
+    taxCredit: rawLineItem.taxCredit ?? 0,
+    taxCreditMax: rawLineItem.taxCreditMax ?? 0,
+    taxCreditPercentage: rawLineItem.taxCreditPercentage ?? 0,
     isFinalLocked: status === 'sent',
   }
 
-  const recalculated = recalculateLineItem(normalized)
+  const recalculated = recalculateLineItem(normalized, climateZone)
 
   // For draft proposals, don't preserve finalTotal - always recalculate
   // For sent proposals, preserve the locked finalTotal
@@ -432,13 +473,25 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
     // Final Total = mesmo que Subtotal (valor total da proposta)
     const finalTotal = subtotal
     
-    // Tax Credit = 30% do Subtotal (máximo $1,200 para zona 5)
-    const taxCredit = roundCurrency(Math.min(subtotal * 0.3, 1200))
+    // Tax Credit = soma dos tax credits individuais (IRA 2024, granular por material)
+    const taxCredit = roundCurrency(lineItems.reduce((total, item) => total + item.taxCredit, 0))
     
     // Net Investment = Subtotal - Tax Credit (quanto o cliente paga APÓS desconto federal)
     const netPrice = roundCurrency(subtotal - taxCredit)
+    
+    // Total estimated annual savings (all lines combined)
+    const totalEstimatedAnnualSavings = roundCurrency(
+      lineItems.reduce((total, item) => total + (item.estimatedAnnualSavings ?? 0), 0)
+    )
 
-    return { subtotal, suggestedTotal, finalTotal, taxCredit, netPrice }
+    return { 
+      subtotal, 
+      suggestedTotal, 
+      finalTotal, 
+      taxCredit, 
+      netPrice,
+      totalEstimatedAnnualSavings,
+    }
   }, [lineItems])
 
   const bagCountWarning = useMemo(() => {

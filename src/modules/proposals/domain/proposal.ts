@@ -41,6 +41,17 @@ export interface ProposalLineItem {
   suggestedTotal: number // Cost WITH margin applied (formula-calculated)
   finalTotal: number // Editable final price for this line item
   note: string // Service-specific notes and observations
+  
+  // Tax Credit (IRA 2024)
+  taxCredit: number // Federal tax credit eligible for this line item
+  taxCreditMax: number // Maximum allowed for this material type
+  taxCreditPercentage: number // Percentage of cost eligible (30%)
+  
+  // Energy Savings Estimation
+  estimatedAnnualSavings?: number // $ saved per year
+  estimatedMonthlyAverage?: number // $ saved per month
+  paybackPeriod?: number // Years to break even
+  energyPercentReduction?: string // "15%-20%" or similar
 }
 
 export interface Proposal {
@@ -52,7 +63,7 @@ export interface Proposal {
   status: ProposalStatus
   subtotal: number // Sum of all line item finalTotal (total proposal cost WITH margin)
   suggestedTotal: number // Sum of all line item suggestedTotal (internal reference only)
-  taxCredit: number // 30% of subtotal (max $1,200)
+  taxCredit: number // Sum of all line item tax credits (IRA 2024)
   netPrice: number // Subtotal - taxCredit (what client pays AFTER federal discount)
   finalTotal: number // Same as subtotal (kept for compatibility)
   createdAt: string
@@ -60,4 +71,12 @@ export interface Proposal {
   lineItems: ProposalLineItem[]
   note: string // General proposal notes
   deletedAt?: string
+  
+  // Energy Savings Summary
+  totalEstimatedAnnualSavings?: number // All line items combined
+  totalEstimatedMonthlyAverage?: number
+  recommendedPaybackPeriod?: number // Years to break even
+  
+  // Good-Better-Best pricing tier (if using tiered presentation)
+  pricingTier?: 'good' | 'better' | 'best' // Which option is this
 }
