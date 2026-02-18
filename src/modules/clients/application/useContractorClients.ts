@@ -13,7 +13,10 @@ interface AddClientInput {
 }
 
 export function useContractorClients(contractorId: string) {
-  const [clients, setClients] = useState<Client[]>(() => listContractorClients(contractorId))
+  const [clients, setClients] = useState<Client[]>(() => {
+    const result = listContractorClients(contractorId)
+    return result
+  })
 
   function addClient(input: AddClientInput) {
     addContractorClient(contractorId, {

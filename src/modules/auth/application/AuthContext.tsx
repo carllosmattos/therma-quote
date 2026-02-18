@@ -40,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function register(input: RegisterInput) {
     const users = listContractorUsers()
+    
     const exists = users.some((item) => item.email.toLowerCase() === input.email.toLowerCase())
 
     if (exists) {
@@ -56,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const nextUsers = [...users, nextUser]
+    
     saveContractorUsers(nextUsers)
 
     const sessionUser = toSessionUser(nextUser)

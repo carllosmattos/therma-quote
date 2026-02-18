@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Proposal, ProposalLineItem, ProposalScopeItem, ProposalStatus } from '../domain/proposal'
+import type { InspectionPhoto, ManufacturerCertification, PreliminaryInspection } from '../domain/compliance'
 import {
   ADDITIONAL_SCOPES,
   APPLICATIONS,
@@ -19,10 +20,22 @@ import {
   type InsulationMaterialKey,
   type ServiceAreaKey,
 } from '../domain/insulationCatalog'
-import { calculateScopeTotal, calculateTechnicalPricing, roundCurrency } from '../domain/pricing'
+import { calculateScopeTotal, calculateTechnicalPricing, roundCurrency, calculateTaxCredit, calculateEnergySavings } from '../domain/pricing'
 import type { Client } from '../../clients/domain/client'
 import type { Company } from '../../company/domain/company'
 import { listContractorProposals, upsertProposal, getProposal } from '../infrastructure/proposalStorage'
+import {
+  addInspectionPhoto,
+  addManufacturerCertification,
+  createPreliminaryInspection,
+  deleteInspectionPhoto,
+  deleteManufacturerCertification,
+  getLatestPreliminaryInspection,
+  getProposalComplianceSummary,
+  listInspectionPhotos,
+  listManufacturerCertifications,
+  updatePreliminaryInspection,
+} from '../infrastructure/complianceStorage'
 
 interface ProposalBuilderInput {
   contractorId: string
@@ -116,7 +129,7 @@ function ensureRequiredScopes(serviceArea: ServiceAreaKey, scopes: ProposalScope
   return enriched
 }
 
-function recalculateLineItem(lineItem: EditableProposalLineItem): EditableProposalLineItem {
+function recalculateLineItem(lineItem: EditableProposalLineItem, climateZone: number = 4): EditableProposalLineItem {
   const requiredScopes = ensureRequiredScopes(lineItem.serviceArea as ServiceAreaKey, lineItem.additionalScopes, lineItem.effectiveAreaSqFt)
   const scopes = recalculateScopes(requiredScopes, lineItem.effectiveAreaSqFt)
   const additionalScopesTotal = roundCurrency(scopes.reduce((total, scope) => total + scope.total, 0))
@@ -140,6 +153,23 @@ function recalculateLineItem(lineItem: EditableProposalLineItem): EditablePropos
   // If locked, preserve the customized finalTotal value
   const nextFinalTotal = lineItem.isFinalLocked ? lineItem.finalTotal : pricing.suggestedTotal
 
+  // Calculate Tax Credit (IRA 2024)
+  const taxCreditResult = calculateTaxCredit({
+    materialKey: lineItem.materialKey,
+    applicationKey: lineItem.application,
+    subtotal: pricing.subtotal,
+  })
+
+  // Calculate Energy Savings
+  const energySavings = calculateEnergySavings({
+    climateZone,
+    serviceArea: lineItem.serviceArea,
+    currentRValue: lineItem.existingRValue,
+    targetRValue: lineItem.targetRValue,
+    areaSqFt: lineItem.areaSqFt,
+    proposalCost: nextFinalTotal - taxCreditResult.taxCredit,
+  })
+
   return {
     ...lineItem,
     additionalScopes: scopes,
@@ -153,6 +183,17 @@ function recalculateLineItem(lineItem: EditableProposalLineItem): EditablePropos
     marginValue: pricing.marginValue,
     suggestedTotal: pricing.suggestedTotal,
     finalTotal: roundCurrency(nextFinalTotal),
+    
+    // Tax credit fields
+    taxCredit: taxCreditResult.taxCredit,
+    taxCreditMax: taxCreditResult.maxCredit,
+    taxCreditPercentage: taxCreditResult.creditPercentage,
+    
+    // Energy savings fields
+    estimatedAnnualSavings: energySavings.estimatedAnnualSavings,
+    estimatedMonthlyAverage: energySavings.estimatedMonthlyAverage,
+    paybackPeriod: energySavings.paybackPeriod,
+    energyPercentReduction: energySavings.energyPercentReduction,
   }
 }
 
@@ -190,10 +231,13 @@ function buildLineItem(serviceArea: ServiceAreaKey, climateZone: number, company
     suggestedTotal: 0,
     finalTotal: 0,
     note: '',
+    taxCredit: 0,
+    taxCreditMax: 0,
+    taxCreditPercentage: 0,
     isFinalLocked: false,
   }
 
-  const calculated = recalculateLineItem(baseLine)
+  const calculated = recalculateLineItem(baseLine, climateZone)
 
   return {
     ...calculated,
@@ -230,6 +274,13 @@ function toProposalLineItem(item: EditableProposalLineItem): ProposalLineItem {
     suggestedTotal: item.suggestedTotal,
     finalTotal: item.finalTotal,
     note: item.note,
+    taxCredit: item.taxCredit,
+    taxCreditMax: item.taxCreditMax,
+    taxCreditPercentage: item.taxCreditPercentage,
+    estimatedAnnualSavings: item.estimatedAnnualSavings,
+    estimatedMonthlyAverage: item.estimatedMonthlyAverage,
+    paybackPeriod: item.paybackPeriod,
+    energyPercentReduction: item.energyPercentReduction,
   }
 }
 
@@ -334,10 +385,13 @@ function normalizeStoredLineItem(
     suggestedTotal: rawLineItem.suggestedTotal ?? 0,
     finalTotal: rawLineItem.finalTotal ?? 0,
     note: rawLineItem.note ?? '',
+    taxCredit: rawLineItem.taxCredit ?? 0,
+    taxCreditMax: rawLineItem.taxCreditMax ?? 0,
+    taxCreditPercentage: rawLineItem.taxCreditPercentage ?? 0,
     isFinalLocked: status === 'sent',
   }
 
-  const recalculated = recalculateLineItem(normalized)
+  const recalculated = recalculateLineItem(normalized, climateZone)
 
   // For draft proposals, don't preserve finalTotal - always recalculate
   // For sent proposals, preserve the locked finalTotal
@@ -382,6 +436,36 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
   const [isSending, setIsSending] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
   const [actionMessage, setActionMessage] = useState('')
+  const [complianceTick, setComplianceTick] = useState(0)
+  const [inspection, setInspection] = useState<PreliminaryInspection | null>(() => getLatestPreliminaryInspection(proposalId))
+  const [inspectionPhotos, setInspectionPhotos] = useState<InspectionPhoto[]>(() =>
+    inspection ? listInspectionPhotos(inspection.id) : [],
+  )
+  const [manufacturerCertifications, setManufacturerCertifications] = useState<ManufacturerCertification[]>(() =>
+    listManufacturerCertifications(proposalId),
+  )
+
+  const complianceSummary = useMemo(
+    () => getProposalComplianceSummary(proposalId),
+    [proposalId, complianceTick],
+  )
+
+  useEffect(() => {
+    setInspection(getLatestPreliminaryInspection(proposalId))
+  }, [proposalId, complianceTick])
+
+  useEffect(() => {
+    if (!inspection) {
+      setInspectionPhotos([])
+      return
+    }
+
+    setInspectionPhotos(listInspectionPhotos(inspection.id))
+  }, [inspection, complianceTick])
+
+  useEffect(() => {
+    setManufacturerCertifications(listManufacturerCertifications(proposalId))
+  }, [proposalId, complianceTick])
 
   const selectedClient = useMemo(
     () => input.clients.find((client) => client.id === clientId) ?? input.clients[0],
@@ -432,13 +516,25 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
     // Final Total = mesmo que Subtotal (valor total da proposta)
     const finalTotal = subtotal
     
-    // Tax Credit = 30% do Subtotal (máximo $1,200 para zona 5)
-    const taxCredit = roundCurrency(Math.min(subtotal * 0.3, 1200))
+    // Tax Credit = soma dos tax credits individuais (IRA 2024, granular por material)
+    const taxCredit = roundCurrency(lineItems.reduce((total, item) => total + item.taxCredit, 0))
     
     // Net Investment = Subtotal - Tax Credit (quanto o cliente paga APÓS desconto federal)
     const netPrice = roundCurrency(subtotal - taxCredit)
+    
+    // Total estimated annual savings (all lines combined)
+    const totalEstimatedAnnualSavings = roundCurrency(
+      lineItems.reduce((total, item) => total + (item.estimatedAnnualSavings ?? 0), 0)
+    )
 
-    return { subtotal, suggestedTotal, finalTotal, taxCredit, netPrice }
+    return { 
+      subtotal, 
+      suggestedTotal, 
+      finalTotal, 
+      taxCredit, 
+      netPrice,
+      totalEstimatedAnnualSavings,
+    }
   }, [lineItems])
 
   const bagCountWarning = useMemo(() => {
@@ -536,11 +632,13 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
       updatedAt: new Date().toISOString(),
       note,
       lineItems: lineItems.map(toProposalLineItem),
+      complianceSummary,
     }
 
     upsertProposal(proposalToSave)
   }, [
     climateZone,
+    complianceSummary,
     createdAt,
     input.company.id,
     input.contractorId,
@@ -578,6 +676,7 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
     updatedAt: new Date().toISOString(),
     note,
     lineItems: lineItems.map(toProposalLineItem),
+    complianceSummary,
   }
 
   function showActionMessage(message: string) {
@@ -586,6 +685,95 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
       setActionMessage('')
     }, 1600)
   }
+
+    function refreshCompliance() {
+      setComplianceTick((current) => current + 1)
+    }
+
+    function saveInspection(input: {
+      status: PreliminaryInspection['status']
+      inspectorName: string
+      inspectionDate?: string
+      existingRValueValidated: boolean
+      existingRValueFound: number
+      accessNotes: string
+      notes: string
+    }) {
+      const now = new Date().toISOString()
+
+      if (inspection) {
+        const updated: PreliminaryInspection = {
+          ...inspection,
+          status: input.status,
+          inspectorName: input.inspectorName,
+          inspectionDate: input.inspectionDate,
+          existingRValueValidated: input.existingRValueValidated,
+          existingRValueFound: input.existingRValueFound,
+          accessNotes: input.accessNotes,
+          notes: input.notes,
+          updatedAt: now,
+        }
+        updatePreliminaryInspection(updated)
+        setInspection(updated)
+        refreshCompliance()
+        return
+      }
+
+      const created = createPreliminaryInspection({
+        id: `inspection-${Date.now()}`,
+        proposalId,
+        status: input.status,
+        inspectorName: input.inspectorName,
+        inspectionDate: input.inspectionDate,
+        existingRValueValidated: input.existingRValueValidated,
+        existingRValueFound: input.existingRValueFound,
+        accessNotes: input.accessNotes,
+        notes: input.notes,
+      })
+
+      setInspection(created)
+      refreshCompliance()
+    }
+
+    async function addInspectionPhotoFile(file: File, caption?: string) {
+      let targetInspection = inspection
+
+      if (!targetInspection) {
+        targetInspection = createPreliminaryInspection({
+          id: `inspection-${Date.now()}`,
+          proposalId,
+          status: 'pending',
+          inspectorName: 'Unassigned',
+          existingRValueValidated: false,
+          existingRValueFound: 0,
+          accessNotes: '',
+          notes: '',
+        })
+        setInspection(targetInspection)
+      }
+
+      await addInspectionPhoto(targetInspection.id, file, caption)
+      refreshCompliance()
+    }
+
+    function addCertification(input: Omit<ManufacturerCertification, 'id' | 'proposalId'>) {
+      addManufacturerCertification({
+        ...input,
+        id: `cert-${Date.now()}`,
+        proposalId,
+      })
+      refreshCompliance()
+    }
+
+    async function removeInspectionPhoto(photoId: string, fileName: string) {
+      await deleteInspectionPhoto(photoId, fileName)
+      refreshCompliance()
+    }
+
+    function removeCertification(certificationId: string) {
+      deleteManufacturerCertification(certificationId)
+      refreshCompliance()
+    }
 
   function updateActiveLineItem(updater: (lineItem: EditableProposalLineItem) => EditableProposalLineItem) {
     if (!activeLineItem || isReadOnly) {
@@ -954,6 +1142,10 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
       note,
       nextProposalStatus,
       proposal,
+      complianceSummary,
+      inspection,
+      inspectionPhotos,
+      manufacturerCertifications,
       materials: INSULATION_MATERIALS,
       serviceAreas: SERVICE_AREAS,
       applications: APPLICATIONS,
@@ -995,6 +1187,11 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
       rejectProposal,
       completeProposal,
       cancelProposal,
+      saveInspection,
+      addInspectionPhotoFile,
+      addCertification,
+      removeInspectionPhoto,
+      removeCertification,
     },
   }
 }

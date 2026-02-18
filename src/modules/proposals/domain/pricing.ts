@@ -139,3 +139,13 @@ export function calculateTechnicalPricing(input: TechnicalPricingInput): Technic
 export function roundCurrency(value: number): number {
   return Math.round(value * 100) / 100
 }
+
+// Re-export tax credit and energy calculators for convenience
+export { calculateTaxCredit, describeTaxCredit } from './taxCreditCalculator'
+export type { TaxCreditInput, TaxCreditResult } from './taxCreditCalculator'
+
+export { calculateEnergySavings, formatEnergySavings } from './energyCalculator'
+export type { EnergyCalculatorInput, EnergyCalculatorResult } from './energyCalculator'
+
+export { generateProposalOptions, getCoreOptionRecommendation } from './proposalOptions'
+export type { ProposalOption, ProposalOptionTier } from './proposalOptions'

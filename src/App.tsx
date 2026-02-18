@@ -50,8 +50,8 @@ function App() {
       </nav>
 
       <Routes>
-        <Route path="/login" element={user ? <Navigate to="/proposals/new" replace /> : <LoginPage />} />
-        <Route path="/register" element={user ? <Navigate to="/proposals/new" replace /> : <RegisterPage />} />
+        <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+        <Route path="/register" element={user ? <Navigate to="/" replace /> : <RegisterPage />} />
         <Route
           path="/"
           element={

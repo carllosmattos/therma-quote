@@ -25,7 +25,7 @@ export function LoginPage() {
     }
 
     setIsLoading(false)
-    navigate('/proposals/new')
+    navigate('/')
   }
 
   return (
