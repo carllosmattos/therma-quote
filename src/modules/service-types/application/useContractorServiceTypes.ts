@@ -16,7 +16,10 @@ interface AddServiceTypeInput {
 }
 
 export function useContractorServiceTypes(contractorId: string) {
-  const [serviceTypes, setServiceTypes] = useState<ServiceType[]>(() => listContractorServiceTypes(contractorId))
+  const [serviceTypes, setServiceTypes] = useState<ServiceType[]>(() => {
+    const result = listContractorServiceTypes(contractorId)
+    return result
+  })
 
   function addServiceType(input: AddServiceTypeInput) {
     addContractorServiceType(contractorId, {

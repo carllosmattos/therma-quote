@@ -1,4 +1,5 @@
 import type { ApplicationKey, InsulationMaterialKey, ServiceAreaKey } from './insulationCatalog'
+import type { ProposalComplianceSummary } from './compliance'
 
 export type ProposalStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'completed' | 'canceled'
 
@@ -79,4 +80,7 @@ export interface Proposal {
   
   // Good-Better-Best pricing tier (if using tiered presentation)
   pricingTier?: 'good' | 'better' | 'best' // Which option is this
+
+  // Compliance summary
+  complianceSummary?: ProposalComplianceSummary
 }

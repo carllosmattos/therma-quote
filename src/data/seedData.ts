@@ -8,6 +8,43 @@ export const company: Company = {
   name: 'ThermaShield Insulation',
   laborCostPerSqFt: 1.25,
   defaultMarginRate: 0.3,
+  credentials: {
+    licenseNumber: 'MA-INS-38421',
+    licenseState: 'MA',
+    licenseType: 'Insulation Contractor',
+    licenseExpiryDate: '2026-12-31',
+    licenseVerificationUrl: 'https://example.gov/licenses/MA-INS-38421',
+    insurancePolicies: [
+      {
+        policyType: 'general-liability',
+        provider: 'National Contractor Insurance',
+        policyNumber: 'GL-2024-1188',
+        coverageAmount: '$1,000,000',
+        expiryDate: '2026-10-01',
+        documentUrl: 'https://example.com/insurance/gl-2024-1188',
+      },
+      {
+        policyType: 'workers-comp',
+        provider: 'National Contractor Insurance',
+        policyNumber: 'WC-2024-2044',
+        coverageAmount: '$1,000,000',
+        expiryDate: '2026-10-01',
+        documentUrl: 'https://example.com/insurance/wc-2024-2044',
+      },
+    ],
+    certifications: [
+      {
+        type: 'bpi',
+        certNumber: 'BPI-RES-77821',
+        issueDate: '2023-03-01',
+        expiryDate: '2026-03-01',
+        issuingBody: 'BPI',
+        documentUrl: 'https://example.com/certs/bpi-res-77821',
+      },
+    ],
+    backgroundCheckCompleted: true,
+    backgroundCheckDate: '2024-01-10',
+  },
 }
 
 export const clients: Client[] = [

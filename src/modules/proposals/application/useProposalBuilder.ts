@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Proposal, ProposalLineItem, ProposalScopeItem, ProposalStatus } from '../domain/proposal'
+import type { InspectionPhoto, ManufacturerCertification, PreliminaryInspection } from '../domain/compliance'
 import {
   ADDITIONAL_SCOPES,
   APPLICATIONS,
@@ -23,6 +24,18 @@ import { calculateScopeTotal, calculateTechnicalPricing, roundCurrency, calculat
 import type { Client } from '../../clients/domain/client'
 import type { Company } from '../../company/domain/company'
 import { listContractorProposals, upsertProposal, getProposal } from '../infrastructure/proposalStorage'
+import {
+  addInspectionPhoto,
+  addManufacturerCertification,
+  createPreliminaryInspection,
+  deleteInspectionPhoto,
+  deleteManufacturerCertification,
+  getLatestPreliminaryInspection,
+  getProposalComplianceSummary,
+  listInspectionPhotos,
+  listManufacturerCertifications,
+  updatePreliminaryInspection,
+} from '../infrastructure/complianceStorage'
 
 interface ProposalBuilderInput {
   contractorId: string
@@ -423,6 +436,36 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
   const [isSending, setIsSending] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
   const [actionMessage, setActionMessage] = useState('')
+  const [complianceTick, setComplianceTick] = useState(0)
+  const [inspection, setInspection] = useState<PreliminaryInspection | null>(() => getLatestPreliminaryInspection(proposalId))
+  const [inspectionPhotos, setInspectionPhotos] = useState<InspectionPhoto[]>(() =>
+    inspection ? listInspectionPhotos(inspection.id) : [],
+  )
+  const [manufacturerCertifications, setManufacturerCertifications] = useState<ManufacturerCertification[]>(() =>
+    listManufacturerCertifications(proposalId),
+  )
+
+  const complianceSummary = useMemo(
+    () => getProposalComplianceSummary(proposalId),
+    [proposalId, complianceTick],
+  )
+
+  useEffect(() => {
+    setInspection(getLatestPreliminaryInspection(proposalId))
+  }, [proposalId, complianceTick])
+
+  useEffect(() => {
+    if (!inspection) {
+      setInspectionPhotos([])
+      return
+    }
+
+    setInspectionPhotos(listInspectionPhotos(inspection.id))
+  }, [inspection, complianceTick])
+
+  useEffect(() => {
+    setManufacturerCertifications(listManufacturerCertifications(proposalId))
+  }, [proposalId, complianceTick])
 
   const selectedClient = useMemo(
     () => input.clients.find((client) => client.id === clientId) ?? input.clients[0],
@@ -589,11 +632,13 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
       updatedAt: new Date().toISOString(),
       note,
       lineItems: lineItems.map(toProposalLineItem),
+      complianceSummary,
     }
 
     upsertProposal(proposalToSave)
   }, [
     climateZone,
+    complianceSummary,
     createdAt,
     input.company.id,
     input.contractorId,
@@ -631,6 +676,7 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
     updatedAt: new Date().toISOString(),
     note,
     lineItems: lineItems.map(toProposalLineItem),
+    complianceSummary,
   }
 
   function showActionMessage(message: string) {
@@ -639,6 +685,95 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
       setActionMessage('')
     }, 1600)
   }
+
+    function refreshCompliance() {
+      setComplianceTick((current) => current + 1)
+    }
+
+    function saveInspection(input: {
+      status: PreliminaryInspection['status']
+      inspectorName: string
+      inspectionDate?: string
+      existingRValueValidated: boolean
+      existingRValueFound: number
+      accessNotes: string
+      notes: string
+    }) {
+      const now = new Date().toISOString()
+
+      if (inspection) {
+        const updated: PreliminaryInspection = {
+          ...inspection,
+          status: input.status,
+          inspectorName: input.inspectorName,
+          inspectionDate: input.inspectionDate,
+          existingRValueValidated: input.existingRValueValidated,
+          existingRValueFound: input.existingRValueFound,
+          accessNotes: input.accessNotes,
+          notes: input.notes,
+          updatedAt: now,
+        }
+        updatePreliminaryInspection(updated)
+        setInspection(updated)
+        refreshCompliance()
+        return
+      }
+
+      const created = createPreliminaryInspection({
+        id: `inspection-${Date.now()}`,
+        proposalId,
+        status: input.status,
+        inspectorName: input.inspectorName,
+        inspectionDate: input.inspectionDate,
+        existingRValueValidated: input.existingRValueValidated,
+        existingRValueFound: input.existingRValueFound,
+        accessNotes: input.accessNotes,
+        notes: input.notes,
+      })
+
+      setInspection(created)
+      refreshCompliance()
+    }
+
+    async function addInspectionPhotoFile(file: File, caption?: string) {
+      let targetInspection = inspection
+
+      if (!targetInspection) {
+        targetInspection = createPreliminaryInspection({
+          id: `inspection-${Date.now()}`,
+          proposalId,
+          status: 'pending',
+          inspectorName: 'Unassigned',
+          existingRValueValidated: false,
+          existingRValueFound: 0,
+          accessNotes: '',
+          notes: '',
+        })
+        setInspection(targetInspection)
+      }
+
+      await addInspectionPhoto(targetInspection.id, file, caption)
+      refreshCompliance()
+    }
+
+    function addCertification(input: Omit<ManufacturerCertification, 'id' | 'proposalId'>) {
+      addManufacturerCertification({
+        ...input,
+        id: `cert-${Date.now()}`,
+        proposalId,
+      })
+      refreshCompliance()
+    }
+
+    async function removeInspectionPhoto(photoId: string, fileName: string) {
+      await deleteInspectionPhoto(photoId, fileName)
+      refreshCompliance()
+    }
+
+    function removeCertification(certificationId: string) {
+      deleteManufacturerCertification(certificationId)
+      refreshCompliance()
+    }
 
   function updateActiveLineItem(updater: (lineItem: EditableProposalLineItem) => EditableProposalLineItem) {
     if (!activeLineItem || isReadOnly) {
@@ -1007,6 +1142,10 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
       note,
       nextProposalStatus,
       proposal,
+      complianceSummary,
+      inspection,
+      inspectionPhotos,
+      manufacturerCertifications,
       materials: INSULATION_MATERIALS,
       serviceAreas: SERVICE_AREAS,
       applications: APPLICATIONS,
@@ -1048,6 +1187,11 @@ export function useProposalBuilder(input: ProposalBuilderInput) {
       rejectProposal,
       completeProposal,
       cancelProposal,
+      saveInspection,
+      addInspectionPhotoFile,
+      addCertification,
+      removeInspectionPhoto,
+      removeCertification,
     },
   }
 }

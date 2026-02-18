@@ -32,7 +32,7 @@ export function RegisterPage() {
     }
 
     setIsLoading(false)
-    navigate('/proposals/new')
+    navigate('/')
   }
 
   return (

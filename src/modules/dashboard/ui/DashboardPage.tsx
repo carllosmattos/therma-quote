@@ -1,4 +1,4 @@
-import { company } from '../../../data/seedData'
+import { getCompany } from '../../company/infrastructure/companyStorage'
 import { useProposalBuilder } from '../../proposals/application/useProposalBuilder'
 import { ProposalBuilderCard } from '../../proposals/ui/ProposalBuilderCard'
 import { ProposalPreviewCard } from '../../proposals/ui/ProposalPreviewCard'
@@ -10,6 +10,7 @@ import { Link, useParams } from 'react-router-dom'
 export function DashboardPage() {
   const { user } = useAuth()
   const { id: proposalId } = useParams<{ id?: string }>()
+  const company = getCompany('co-therma-001')
 
   const { clients } = useContractorClients(user?.id ?? 'no-contractor')
 
@@ -120,6 +121,14 @@ export function DashboardPage() {
           onMatchSuggested={actions.matchSuggested}
           onLineNoteChange={actions.setLineNote}
           onNoteChange={actions.setNote}
+          inspection={state.inspection}
+          inspectionPhotos={state.inspectionPhotos}
+          manufacturerCertifications={state.manufacturerCertifications}
+          onSaveInspection={actions.saveInspection}
+          onAddInspectionPhoto={actions.addInspectionPhotoFile}
+          onAddManufacturerCertification={actions.addCertification}
+          onDeleteInspectionPhoto={actions.removeInspectionPhoto}
+          onDeleteManufacturerCertification={actions.removeCertification}
         />
 
         <ProposalPreviewCard
